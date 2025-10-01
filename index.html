@@ -1,43 +1,67 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <title>YOLO + CNN Demo</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>YOLO + CNN Demo (GitHub Pages)</title>
+
   <link rel="stylesheet" href="style.css">
+
   <!-- onnxruntime-web -->
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
 </head>
 <body>
-  <h1>YOLO + CNN Demo</h1>
+  <header>
+    <h1>YOLO + CNN Demo</h1>
+    <p>models/yolo.onnx と models/cnn.onnx を配置して使ってください</p>
+  </header>
 
-  <!-- 画像選択 -->
-  <input type="file" id="imageInput" accept="image/*"><br>
-  <p id="fileList"></p>
+  <main>
+    <section class="controls">
+      <label class="file-label">
+        画像を選択
+        <input id="imageInput" type="file" accept="image/*">
+      </label>
 
-  <!-- 処理ボタン -->
-  <button id="processBtn" style="display:none;">処理開始</button>
+      <div class="row">
+        <label for="modeSelect">動作モード</label>
+        <select id="modeSelect">
+          <option value="yolo">YOLOのみ</option>
+          <option value="yolo-cnn">YOLO → CNN（切り取りを再判定）</option>
+        </select>
 
-  <!-- Canvas -->
-  <canvas id="imageCanvas"></canvas>
+        <label class="checkbox">
+          <input id="errorAnalysisCheck" type="checkbox">
+          エラー解析（切り出し画像を表示）
+        </label>
 
-  <!-- 推論結果 -->
-  <div id="results">
-    <p>予測数字: <span id="predictedNumbers">-</span></p>
-    <p>BBox数: <span id="bboxCount">-</span></p>
-    <p>平均信頼度: <span id="avgConfidence">-</span></p>
-  </div>
+        <button id="processBtn" class="primary" disabled>処理開始</button>
+      </div>
 
-  <!-- エラーメッセージ -->
-  <div id="errorMessage"></div>
+      <p id="fileList" class="muted">モデルを読み込み中…</p>
+    </section>
 
-  <!-- 読み込み中表示 -->
-  <div class="loading">読み込み中...</div>
+    <section class="viewer">
+      <canvas id="imageCanvas"></canvas>
+      <div id="results" class="results">
+        <p>予測: <span id="predictedNumbers">-</span></p>
+        <p>BBox数: <span id="bboxCount">-</span></p>
+        <p>平均信頼度: <span id="avgConfidence">-</span></p>
+      </div>
+    </section>
 
-  <!-- エラー解析用 -->
-  <div id="errorAnalysisSection" style="display:none;">
-    <h2>エラー解析</h2>
-    <div id="bboxImagesContainer"></div>
-  </div>
+    <section id="errorAnalysisSection" class="error-analysis" style="display:none;">
+      <h2>切り取り画像（エラー解析）</h2>
+      <div id="bboxImagesContainer" class="bbox-container"></div>
+    </section>
+
+    <div id="errorMessage" class="error"></div>
+    <div class="loading">読み込み中…</div>
+  </main>
+
+  <footer>
+    <small>YOLO出力フォーマットは正規化された center-x, center-y, w, h (0〜1) を想定しています。必要ならモデルに合わせて parseYOLOOutput を調整してください。</small>
+  </footer>
 
   <script src="app.js"></script>
 </body>
