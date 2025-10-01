@@ -102,9 +102,9 @@ async function runYOLO(image) {
 // YOLO出力が [x1, y1, x2, y2, conf, class] 形式の場合
 function parseYOLOOutput(output, imgWidth, imgHeight) {
     const data = output.data;
-    const numBoxes = data.length / 6; // 6要素ごとに1BBox
+    const numBoxes = data.length / 6;
+    let detections = [];
 
-    const detections = [];
     for (let i = 0; i < numBoxes; i++) {
         const x1 = data[i * 6 + 0];
         const y1 = data[i * 6 + 1];
@@ -113,7 +113,7 @@ function parseYOLOOutput(output, imgWidth, imgHeight) {
         const score = data[i * 6 + 4];
         const cls = data[i * 6 + 5];
 
-        if (score > 0.5) { // 閾値調整OK
+        if (score > 0.7) { // 閾値を高めに
             detections.push({
                 x: x1,
                 y: y1,
@@ -124,8 +124,13 @@ function parseYOLOOutput(output, imgWidth, imgHeight) {
             });
         }
     }
+
+    // NMSで重複除去
+    detections = nonMaxSuppression(detections, 0.45);
+
     return detections;
 }
+
 
 
 // --- CNN用の前処理 (224x224 RGB) ---
