@@ -1,0 +1,24 @@
+body {
+  font-family: sans-serif;
+  margin: 20px;
+}
+
+#imageCanvas {
+  margin-top: 10px;
+  border: 1px solid #ccc;
+  max-width: 100%;
+}
+
+.loading {
+  display: none;
+  color: red;
+  font-weight: bold;
+}
+.loading.active {
+  display: block;
+}
+
+#errorMessage {
+  color: red;
+  margin-top: 10px;
+}

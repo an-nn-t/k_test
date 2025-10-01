@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>YOLO + CNN Demo</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- onnxruntime-web -->
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+</head>
+<body>
+  <h1>YOLO + CNN Demo</h1>
+
+  <!-- 画像選択 -->
+  <input type="file" id="imageInput" accept="image/*"><br>
+  <p id="fileList"></p>
+
+  <!-- 処理ボタン -->
+  <button id="processBtn" style="display:none;">処理開始</button>
+
+  <!-- Canvas -->
+  <canvas id="imageCanvas"></canvas>
+
+  <!-- 推論結果 -->
+  <div id="results">
+    <p>予測数字: <span id="predictedNumbers">-</span></p>
+    <p>BBox数: <span id="bboxCount">-</span></p>
+    <p>平均信頼度: <span id="avgConfidence">-</span></p>
+  </div>
+
+  <!-- エラーメッセージ -->
+  <div id="errorMessage"></div>
+
+  <!-- 読み込み中表示 -->
+  <div class="loading">読み込み中...</div>
+
+  <!-- エラー解析用 -->
+  <div id="errorAnalysisSection" style="display:none;">
+    <h2>エラー解析</h2>
+    <div id="bboxImagesContainer"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
