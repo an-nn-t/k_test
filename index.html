@@ -2,22 +2,480 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>YOLO + CNN Demo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>メーター読み取りアプリ</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
-        body { font-family: Arial, sans-serif; text-align: center; }
-        canvas { border: 1px solid #ccc; margin-top: 10px; }
-        #processBtn { display: none; margin-top: 10px; padding: 8px 16px; }
+        /* Provided style.css content */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #f8f9fa;
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+            overflow: hidden;
+            border: 1px solid #e9ecef;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #343a40 0%, #495057 100%);
+            padding: 40px 30px;
+            text-align: center;
+        }
+
+        h1 {
+            color: white;
+            font-size: 2.2rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            letter-spacing: -0.5px;
+        }
+
+        .subtitle {
+            color: rgba(255, 255, 255, 0.85);
+            font-size: 1rem;
+            font-weight: 400;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .controls {
+            background: white;
+            padding: 20px;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            margin-bottom: 30px;
+        }
+
+        .controls-grid {
+            display: grid;
+            grid-template-columns: 1fr auto auto auto;
+            gap: 20px;
+            align-items: end;
+        }
+
+        @media (max-width: 768px) {
+            .controls-grid {
+                grid-template-columns: 1fr;
+                gap: 15px;
+            }
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .form-label {
+            font-size: 14px;
+            font-weight: 500;
+            color: #495057;
+        }
+
+        .upload-btn {
+            background: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            text-align: center;
+            width: fit-content; /* この行を追加して、ボタンの幅を内容に合わせます */
+        }
+
+        .upload-btn:hover {
+            background: #0056b3;
+        }
+
+        select {
+            padding: 10px 12px;
+            font-size: 14px;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            background: white;
+            color: #495057;
+            cursor: pointer;
+        }
+
+        select:focus {
+            outline: none;
+            border-color: #007bff;
+        }
+
+        .checkbox-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            user-select: none;
+            padding: 10px 0; /* Align with button height */
+        }
+        
+        /* Custom checkbox styles from style.css */
+        .custom-checkbox {
+            position: relative;
+        }
+        .custom-checkbox input {
+            position: absolute;
+            opacity: 0;
+            cursor: pointer;
+            height: 0;
+            width: 0;
+        }
+        .checkmark {
+            position: relative;
+            top: 0;
+            left: 0;
+            height: 18px;
+            width: 18px;
+            background-color: #fff;
+            border: 1px solid #dee2e6;
+            border-radius: 3px;
+            transition: all 0.2s ease;
+        }
+        .checkbox-container:hover input ~ .checkmark {
+            border-color: #007bff;
+        }
+        .custom-checkbox input:checked ~ .checkmark {
+            background-color: #007bff;
+            border-color: #007bff;
+        }
+        .checkmark:after {
+            content: "";
+            position: absolute;
+            display: none;
+            left: 5px;
+            top: 1px;
+            width: 5px;
+            height: 10px;
+            border: solid white;
+            border-width: 0 2px 2px 0;
+            transform: rotate(45deg);
+        }
+        .custom-checkbox input:checked ~ .checkmark:after {
+            display: block;
+        }
+
+
+        .process-btn {
+            background: #28a745;
+            color: white;
+            padding: 10px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.2s ease;
+        }
+
+        .process-btn:hover {
+            background: #218838;
+        }
+
+        #fileList {
+            margin-top: 8px;
+            font-size: 13px;
+            color: #6c757d;
+            padding: 8px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            border: 1px solid #dee2e6;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+        }
+
+        @media (max-width: 768px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .section-card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            border: 1px solid #dee2e6;
+        }
+
+        .section-card h2 {
+            color: #495057;
+            margin-bottom: 15px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        #imageCanvas {
+            max-width: 100%;
+            border: 2px dashed #dee2e6;
+            border-radius: 6px;
+            display: block;
+            transition: all 0.2s ease;
+        }
+
+        #imageCanvas:hover {
+            border-color: #007bff;
+        }
+
+        .result-item {
+            margin-bottom: 15px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            border-left: 3px solid #007bff;
+        }
+
+        .result-label {
+            font-weight: 500;
+            color: #6c757d;
+            margin-bottom: 5px;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .result-value {
+            font-size: 1.3rem;
+            font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+            color: #495057;
+            font-weight: 600;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 30px;
+            background: white;
+            border-radius: 8px;
+            margin: 20px 0;
+            border: 1px solid #dee2e6;
+        }
+
+        .loading.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .loading-spinner {
+            width: 32px;
+            height: 32px;
+            margin-right: 15px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #007bff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            color: #6c757d;
+            font-size: 16px;
+        }
+
+        .error {
+            color: #721c24;
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            border-left: 3px solid #dc3545;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 20px 0;
+            display: none;
+        }
+
+        .error.active {
+            display: block;
+        }
+
+        .error-analysis {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            display: none;
+        }
+
+        .error-analysis h3 {
+            color: #495057;
+            margin-bottom: 15px;
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .bbox-images {
+            display: flex;
+            gap: 15px;
+            margin-top: 15px;
+            overflow-x: auto;
+            padding: 10px 0;
+        }
+
+        .bbox-item {
+            flex-shrink: 0;
+            text-align: center;
+            background: white;
+            padding: 12px;
+            border-radius: 6px;
+            border: 1px solid #dee2e6;
+        }
+
+        .bbox-stages {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .stage-image {
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+        }
+
+        .stage-label {
+            font-size: 12px;
+            color: #6c757d;
+            margin-top: 6px;
+            font-weight: 400;
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f3f5;
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #adb5bd;
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #6c757d;
+        }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
-    <script src="app.js"></script>
 </head>
 <body>
-    <h2>YOLO + CNN Web Demo</h2>
-    <input type="file" id="imageInput" accept="image/*">
-    <br>
-    <button id="processBtn">推論開始</button>
-    <br>
-    <canvas id="imageCanvas"></canvas>
-    <div id="status"></div>
+    <div class="container">
+        <div class="header">
+            <h1>メーター読み取りアプリ</h1>
+                    </div>
+        
+        <div class="content">
+            <div class="controls">
+                <div class="controls-grid">
+                    <div class="form-group">
+                        <label class="form-label">画像選択</label>
+                        <label class="upload-btn">
+                            ファイルを選択
+                            <input type="file" id="imageInput" accept="image/*" multiple style="display: none;">
+                        </label>
+                        <div id="fileList"></div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">処理モード</label>
+                        <select id="modeSelect">
+                            <option value="yolo-cnn">YOLO + CNN</option>
+                            <option value="yolo">YOLOのみ</option>
+                            <option value="cnn">CNNのみ（手動BBox指定）</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">オプション</label>
+                        <label class="checkbox-container">
+                            <div class="custom-checkbox">
+                                <input type="checkbox" id="errorAnalysisCheck">
+                                <span class="checkmark"></span>
+                            </div>
+                            <span>エラー解析モード</span>
+                        </label>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">&nbsp;</label>
+                        <button id="processBtn" class="process-btn" style="display: none;">処理開始</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="loading">
+                 <div class="loading-spinner"></div>
+                 <div class="loading-text">モデルを読み込み中...</div>
+            </div>
+            <div class="error" id="errorMessage"></div>
+
+            <div class="main-content">
+                <div class="section-card">
+                    <h2>画像</h2>
+                    <canvas id="imageCanvas"></canvas>
+                </div>
+
+                <div class="section-card">
+                    <h2>解析結果</h2>
+                    <div id="resultsContainer">
+                        <div class="result-item">
+                            <div class="result-label">予測数字列</div>
+                            <div class="result-value" id="predictedNumbers">-</div>
+                        </div>
+                        <div class="result-item">
+                            <div class="result-label">検出BBox数</div>
+                            <div class="result-value" id="bboxCount">-</div>
+                        </div>
+                        <div class="result-item">
+                            <div class="result-label">信頼度（平均）</div>
+                            <div class="result-value" id="avgConfidence">-</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="error-analysis" id="errorAnalysisSection">
+                <h3>エラー解析</h3>
+                <div class="bbox-images" id="bboxImagesContainer"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
 </body>
 </html>

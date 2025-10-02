@@ -1,204 +1,522 @@
 let yoloSession = null;
 let cnnSession = null;
 let currentImage = null;
+let detections = [];
 
-// --- 初期化 ---
-document.addEventListener('DOMContentLoaded', async () => {
+document.addEventListener('DOMContentLoaded', () => {
+    initializeApp();
     setupEventListeners();
-    await loadModels();
 });
 
-async function loadModels() {
+async function initializeApp() {
     try {
-        setStatus("モデルを読み込み中...");
-        const [yoloBuffer, cnnBuffer] = await Promise.all([
-            fetch('models/yolo.onnx').then(res => res.arrayBuffer()),
-            fetch('models/cnn.onnx').then(res => res.arrayBuffer())
+        console.log('Initializing ONNX models...');
+        showLoading(true, 'モデルを読み込み中...');
+
+        const yoloModelPath = './yolo.onnx';
+        const cnnModelPath = './cnn.onnx';
+
+        // Promise.allを使用して両方のモデルを並行して読み込む
+        [yoloSession, cnnSession] = await Promise.all([
+            ort.InferenceSession.create(yoloModelPath),
+            ort.InferenceSession.create(cnnModelPath)
         ]);
-        yoloSession = await ort.InferenceSession.create(yoloBuffer);
-        cnnSession = await ort.InferenceSession.create(cnnBuffer);
-        setStatus("モデル読み込み完了");
-    } catch (err) {
-        setStatus("モデル読み込み失敗: " + err.message);
+
+        console.log('Models loaded successfully');
+        showLoading(false);
+    } catch (error) {
+        console.error('Failed to initialize models:', error);
+        showError('モデルの初期化に失敗しました: ' + error.message + ' (ファイルが正しい場所に配置されているか確認してください)');
+        showLoading(false);
+        // モデル読み込みに失敗した場合、操作ができないようにUIを非表示にする
+        document.getElementById('mainControls').style.display = 'none';
     }
 }
+
 
 function setupEventListeners() {
-    document.getElementById('imageInput').addEventListener('change', handleImageUpload);
-    document.getElementById('processBtn').addEventListener('click', processImage);
+    const imageInput = document.getElementById('imageInput');
+    const processBtn = document.getElementById('processBtn');
+
+    imageInput.addEventListener('change', handleImageUpload);
+    processBtn.addEventListener('click', processImage);
 }
 
-function handleImageUpload(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-    const img = new Image();
-    img.onload = () => {
-        currentImage = img;
-        drawImageOnCanvas(img);
-        document.getElementById('processBtn').style.display = 'inline-block';
+async function handleImageUpload(event) {
+    const files = event.target.files;
+    if (files.length === 0) return;
+
+    // モデルが読み込まれていない場合は処理を中断
+    if (!yoloSession || !cnnSession) {
+        showError('モデルが正常に読み込まれていません。ページを再読み込みしてください。');
+        return;
+    }
+
+    const fileList = document.getElementById('fileList');
+    fileList.textContent = `選択: ${files.length}枚の画像`;
+
+    const processBtn = document.getElementById('processBtn');
+    processBtn.style.display = 'inline-block';
+
+    const file = files[0];
+    const reader = new FileReader();
+
+    reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+            currentImage = img;
+            drawImageOnCanvas(img);
+            if (document.getElementById('modeSelect').value !== 'cnn') {
+                processImage();
+            }
+        };
+        img.src = e.target.result;
     };
-    img.src = URL.createObjectURL(file);
-}
 
-async function processImage() {
-    if (!currentImage || !yoloSession) return;
-    setStatus("YOLO推論中...");
-    const yoloResults = await runYOLO(currentImage);
-
-    // YOLOの検出結果を描画
-    drawDetections(currentImage, yoloResults, "YOLO");
-
-    // CNNで各bboxを再分類
-    if (cnnSession) {
-        setStatus("CNN推論中...");
-        for (let det of yoloResults) {
-            const inputTensor = preprocessForCNN(currentImage, det);
-            const feeds = { input: inputTensor }; // CNNの入力名はモデルに合わせる
-            const results = await cnnSession.run(feeds);
-            const output = results[Object.keys(results)[0]];
-            const predictedClass = argMax(output.data);
-            det.cnnClass = predictedClass;
-        }
-        drawDetections(currentImage, yoloResults, "CNN");
-    }
-    setStatus("推論完了");
-}
-
-// --- YOLO 前処理 ---
-function preprocessForYOLO(image) {
-    const size = 640; // YOLO入力サイズに合わせる
-    const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(image, 0, 0, size, size);
-
-    const imageData = ctx.getImageData(0, 0, size, size);
-    const { data } = imageData;
-    const input = new Float32Array(3 * size * size);
-
-    for (let i = 0; i < size * size; i++) {
-        input[i] = data[i * 4] / 255.0;                       // R
-        input[i + size * size] = data[i * 4 + 1] / 255.0;     // G
-        input[i + 2 * size * size] = data[i * 4 + 2] / 255.0; // B
-    }
-
-    return new ort.Tensor('float32', input, [1, 3, size, size]);
-}
-
-// --- YOLO 推論実行 ---
-async function runYOLO(image) {
-    const tensor = preprocessForYOLO(image);
-    const feeds = { images: tensor }; // 入力名はモデルに合わせる（例: "images"）
-    const results = await yoloSession.run(feeds);
-
-    const output = results[Object.keys(results)[0]];
-    console.log("YOLO raw output:", output.data);
-
-    return parseYOLOOutput(output, image.width, image.height);
-}
-
-// --- YOLO 出力解釈 ---
-// YOLO出力が [x1, y1, x2, y2, conf, class] 形式の場合
-function parseYOLOOutput(output, imgWidth, imgHeight) {
-    const data = output.data;
-    const numBoxes = data.length / 6;
-    let detections = [];
-
-    for (let i = 0; i < numBoxes; i++) {
-        const x1 = data[i * 6 + 0];
-        const y1 = data[i * 6 + 1];
-        const x2 = data[i * 6 + 2];
-        const y2 = data[i * 6 + 3];
-        const score = data[i * 6 + 4];
-        const cls = data[i * 6 + 5];
-
-        if (score > 0.7) { // 閾値を高めに
-            detections.push({
-                x: x1,
-                y: y1,
-                width: x2 - x1,
-                height: y2 - y1,
-                score: score,
-                class: cls
-            });
-        }
-    }
-
-    // NMSで重複除去
-    detections = nonMaxSuppression(detections, 0.45);
-
-    return detections;
-}
-
-
-
-// --- CNN用の前処理 (224x224 RGB) ---
-function preprocessForCNN(image, det) {
-    const targetSize = 224;
-    const cropCanvas = document.createElement('canvas');
-    cropCanvas.width = det.width;
-    cropCanvas.height = det.height;
-    const cropCtx = cropCanvas.getContext('2d');
-    cropCtx.drawImage(image, det.x, det.y, det.width, det.height, 0, 0, det.width, det.height);
-
-    const cnnCanvas = document.createElement('canvas');
-    cnnCanvas.width = targetSize;
-    cnnCanvas.height = targetSize;
-    const cnnCtx = cnnCanvas.getContext('2d');
-    cnnCtx.drawImage(cropCanvas, 0, 0, targetSize, targetSize);
-
-    const imageData = cnnCtx.getImageData(0, 0, targetSize, targetSize);
-    const { data } = imageData;
-    const input = new Float32Array(3 * targetSize * targetSize);
-
-    for (let i = 0; i < targetSize * targetSize; i++) {
-        input[i] = data[i * 4] / 255.0;
-        input[i + targetSize * targetSize] = data[i * 4 + 1] / 255.0;
-        input[i + 2 * targetSize * targetSize] = data[i * 4 + 2] / 255.0;
-    }
-    return new ort.Tensor('float32', input, [1, 3, targetSize, targetSize]);
-}
-
-// --- 描画 (YOLO or CNNの結果ラベルを選択) ---
-function drawDetections(image, detections, mode) {
-    const canvas = document.getElementById('imageCanvas');
-    const ctx = canvas.getContext('2d');
-    canvas.width = image.width;
-    canvas.height = image.height;
-    ctx.drawImage(image, 0, 0);
-
-    for (let det of detections) {
-        ctx.strokeStyle = "red";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(det.x, det.y, det.width, det.height);
-
-        let label = "";
-        if (mode === "YOLO") {
-            label = `YOLO: ${det.class} (${det.score.toFixed(2)})`;
-        } else if (mode === "CNN") {
-            label = `CNN: ${det.cnnClass}`;
-        }
-
-        ctx.fillStyle = "yellow";
-        ctx.font = "14px Arial";
-        ctx.fillText(label, det.x, det.y > 10 ? det.y - 5 : det.y + 15);
-    }
-}
-
-// --- 補助関数 ---
-function argMax(arr) {
-    return arr.indexOf(Math.max(...arr));
+    reader.readAsDataURL(file);
 }
 
 function drawImageOnCanvas(img) {
     const canvas = document.getElementById('imageCanvas');
     const ctx = canvas.getContext('2d');
-    canvas.width = img.width;
-    canvas.height = img.height;
-    ctx.drawImage(img, 0, 0);
+
+    const maxWidth = 640;
+    const scale = Math.min(1, maxWidth / img.width);
+
+    canvas.width = img.width * scale;
+    canvas.height = img.height * scale;
+
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 }
 
-function setStatus(msg) {
-    document.getElementById('status').innerText = msg;
+async function processImage() {
+    if (!currentImage) return;
+
+    showLoading(true, '処理中...');
+    clearResults();
+
+    const mode = document.getElementById('modeSelect').value;
+
+    try {
+        if (mode === 'yolo' || mode === 'yolo-cnn') {
+            detections = await runYOLO(currentImage);
+            drawImageOnCanvas(currentImage); // BBox描画前に画像を再描画
+            drawBBoxes(detections);
+
+            if (mode === 'yolo-cnn' && detections.length > 0) {
+                const predictions = await runCNNOnDetections(currentImage, detections);
+                displayResults(predictions);
+
+                if (document.getElementById('errorAnalysisCheck').checked) {
+                    showErrorAnalysis(currentImage, detections, predictions);
+                }
+            } else {
+                displayYOLOResults(detections);
+            }
+        } else if (mode === 'cnn') {
+            showError('CNNのみモードは手動BBox指定が必要です（未実装）');
+        }
+    } catch (error) {
+        console.error('Processing error:', error);
+        showError('処理中にエラーが発生しました: ' + error.message);
+    } finally {
+        showLoading(false);
+    }
+}
+
+async function runYOLO(img) {
+    const inputTensor = preprocessImageForYOLO(img);
+    const feeds = { images: inputTensor };
+    const results = await yoloSession.run(feeds);
+
+    const output = results['output0'];
+    const detections = parseYOLOOutput(output, img.width, img.height);
+
+    return filterAndSortDetections(detections);
+}
+
+function preprocessImageForYOLO(img) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 640;
+    canvas.height = 640;
+    const ctx = canvas.getContext('2d');
+
+    ctx.drawImage(img, 0, 0, 640, 640);
+    const imageData = ctx.getImageData(0, 0, 640, 640);
+
+    const float32Data = new Float32Array(3 * 640 * 640);
+    let idx = 0;
+
+    for (let c = 0; c < 3; c++) {
+        for (let h = 0; h < 640; h++) {
+            for (let w = 0; w < 640; w++) {
+                const pixelIdx = (h * 640 + w) * 4;
+                float32Data[idx++] = imageData.data[pixelIdx + c] / 255.0;
+            }
+        }
+    }
+
+    return new ort.Tensor('float32', float32Data, [1, 3, 640, 640]);
+}
+
+function parseYOLOOutput(output, imgWidth, imgHeight) {
+    const data = output.data;
+    const dims = output.dims;
+    const numBoxes = dims[2];
+    const detections = [];
+
+    const scaleX = imgWidth / 640;
+    const scaleY = imgHeight / 640;
+
+    for (let i = 0; i < numBoxes; i++) {
+        const baseIdx = i;
+        const x_center = data[baseIdx] * scaleX;
+        const y_center = data[numBoxes + baseIdx] * scaleY;
+        const w = data[2 * numBoxes + baseIdx] * scaleX;
+        const h = data[3 * numBoxes + baseIdx] * scaleY;
+        const x1 = x_center - w / 2;
+        const y1 = y_center - h / 2;
+
+        let maxScore = 0;
+        let maxClass = 0;
+
+        for (let c = 0; c < 10; c++) {
+            const score = data[(4 + c) * numBoxes + baseIdx];
+            if (score > maxScore) {
+                maxScore = score;
+                maxClass = c;
+            }
+        }
+
+        if (maxScore > 0.5) {
+            detections.push({
+                x: x1,
+                y: y1,
+                width: w,
+                height: h,
+                score: maxScore,
+                class: maxClass
+            });
+        }
+    }
+
+    return detections;
+}
+
+
+function filterAndSortDetections(detections) {
+    // NMS (Non-Maximum Suppression) like logic
+    const filtered = [];
+    detections.sort((a, b) => b.score - a.score); // Sort by score descending
+
+    while(detections.length > 0) {
+        const best = detections.shift();
+        filtered.push(best);
+        detections = detections.filter(det => {
+            const iou = calculateIOU(best, det);
+            return iou < 0.3; // IOU threshold
+        });
+    }
+
+    // Sort by x-coordinate to get left-to-right order
+    return filtered.sort((a, b) => a.x - b.x);
+}
+
+function calculateIOU(box1, box2) {
+    const x1 = Math.max(box1.x, box2.x);
+    const y1 = Math.max(box1.y, box2.y);
+    const x2 = Math.min(box1.x + box1.width, box2.x + box2.width);
+    const y2 = Math.min(box1.y + box1.height, box2.y + box2.height);
+
+    const intersectionArea = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+    const box1Area = box1.width * box1.height;
+    const box2Area = box2.width * box2.height;
+
+    return intersectionArea / (box1Area + box2Area - intersectionArea);
+}
+
+
+async function runCNNOnDetections(img, detections) {
+    const predictions = [];
+
+    for (const det of detections) {
+        const cropped = cropImage(img, det);
+        const binarized = binarizeImage(cropped);
+        const inputTensor = preprocessImageForCNN(binarized);
+
+        const feeds = { input: inputTensor };
+        const results = await cnnSession.run(feeds);
+        const output = results['output'];
+
+        const predictedClass = argmax(output.data);
+        predictions.push({
+            bbox: det,
+            digit: predictedClass,
+            confidence: det.score,
+            stages: {
+                original: cropped,
+                binarized: binarized,
+                preprocessed: tensorToCanvas(inputTensor)
+            }
+        });
+    }
+
+    return predictions;
+}
+
+function cropImage(img, bbox) {
+    const canvas = document.createElement('canvas');
+    canvas.width = bbox.width;
+    canvas.height = bbox.height;
+    const ctx = canvas.getContext('2d');
+
+    ctx.drawImage(img, bbox.x, bbox.y, bbox.width, bbox.height, 0, 0, bbox.width, bbox.height);
+    return canvas;
+}
+
+function binarizeImage(canvas) {
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+
+    // 大津の二値化法を適用
+    const histogram = new Array(256).fill(0);
+    const grayData = [];
+
+    for (let i = 0; i < data.length; i += 4) {
+        const gray = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+        histogram[gray]++;
+        grayData.push(gray);
+    }
+
+    let total = grayData.length;
+    let sum = 0;
+    for (let i = 0; i < 256; i++) {
+        sum += i * histogram[i];
+    }
+
+    let sumB = 0;
+    let wB = 0;
+    let wF = 0;
+    let varMax = 0;
+    let threshold = 0;
+
+    for (let i = 0; i < 256; i++) {
+        wB += histogram[i];
+        if (wB === 0) continue;
+        wF = total - wB;
+        if (wF === 0) break;
+
+        sumB += i * histogram[i];
+        let mB = sumB / wB;
+        let mF = (sum - sumB) / wF;
+
+        let varBetween = wB * wF * (mB - mF) * (mB - mF);
+        if (varBetween > varMax) {
+            varMax = varBetween;
+            threshold = i;
+        }
+    }
+
+    for (let i = 0; i < data.length; i += 4) {
+        const value = grayData[i / 4] > threshold ? 255 : 0;
+        data[i] = value;
+        data[i + 1] = value;
+        data[i + 2] = value;
+    }
+
+    const outputCanvas = document.createElement('canvas');
+    outputCanvas.width = canvas.width;
+    outputCanvas.height = canvas.height;
+    const outputCtx = outputCanvas.getContext('2d');
+    outputCtx.putImageData(imageData, 0, 0);
+
+    return outputCanvas;
+}
+
+function preprocessImageForCNN(canvas) {
+    const resizedCanvas = document.createElement('canvas');
+    resizedCanvas.width = 224;
+    resizedCanvas.height = 224;
+    const ctx = resizedCanvas.getContext('2d');
+
+    ctx.drawImage(canvas, 0, 0, 224, 224);
+    const imageData = ctx.getImageData(0, 0, 224, 224);
+
+    const float32Data = new Float32Array(3 * 224 * 224);
+    let idx = 0;
+
+    const mean = [0.485, 0.456, 0.406];
+    const std = [0.229, 0.224, 0.225];
+
+    for (let c = 0; c < 3; c++) {
+        for (let h = 0; h < 224; h++) {
+            for (let w = 0; w < 224; w++) {
+                const pixelIdx = (h * 224 + w) * 4;
+                const value = imageData.data[pixelIdx + c] / 255.0;
+                float32Data[idx++] = (value - mean[c]) / std[c];
+            }
+        }
+    }
+
+    return new ort.Tensor('float32', float32Data, [1, 3, 224, 224]);
+}
+
+function tensorToCanvas(tensor) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 224;
+    canvas.height = 224;
+    const ctx = canvas.getContext('2d');
+
+    const imageData = ctx.createImageData(224, 224);
+    const data = tensor.data;
+
+    const mean = [0.485, 0.456, 0.406];
+    const std = [0.229, 0.224, 0.225];
+
+    for (let h = 0; h < 224; h++) {
+        for (let w = 0; w < 224; w++) {
+            const pixelIdx = (h * 224 + w) * 4;
+
+            for (let c = 0; c < 3; c++) {
+                const tensorIdx = c * 224 * 224 + h * 224 + w;
+                const value = (data[tensorIdx] * std[c] + mean[c]) * 255;
+                imageData.data[pixelIdx + c] = Math.max(0, Math.min(255, value));
+            }
+            imageData.data[pixelIdx + 3] = 255;
+        }
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+    return canvas;
+}
+
+function argmax(array) {
+    let maxIdx = 0;
+    let maxVal = array[0];
+
+    for (let i = 1; i < array.length; i++) {
+        if (array[i] > maxVal) {
+            maxVal = array[i];
+            maxIdx = i;
+        }
+    }
+
+    return maxIdx;
+}
+
+function drawBBoxes(detections) {
+    const canvas = document.getElementById('imageCanvas');
+    const ctx = canvas.getContext('2d');
+
+    const scale = canvas.width / currentImage.naturalWidth;
+
+    detections.forEach(det => {
+        ctx.strokeStyle = '#00FF00';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(det.x * scale, det.y * scale, det.width * scale, det.height * scale);
+
+        const text = `${det.class} (${(det.score * 100).toFixed(1)}%)`;
+        ctx.fillStyle = '#00FF00';
+        ctx.font = '16px Arial';
+        const textWidth = ctx.measureText(text).width;
+        ctx.fillRect(det.x * scale, det.y * scale - 20, textWidth + 4, 20);
+        
+        ctx.fillStyle = '#000000';
+        ctx.fillText(text, det.x * scale + 2, det.y * scale - 5);
+    });
+}
+
+function displayResults(predictions) {
+    const numbers = predictions.map(p => p.digit).join('');
+    const avgConf = predictions.length > 0 ? predictions.reduce((sum, p) => sum + p.confidence, 0) / predictions.length : 0;
+
+    document.getElementById('predictedNumbers').textContent = numbers;
+    document.getElementById('bboxCount').textContent = predictions.length;
+    document.getElementById('avgConfidence').textContent = (avgConf * 100).toFixed(1) + '%';
+}
+
+function displayYOLOResults(detections) {
+    const numbers = detections.map(d => d.class).join('');
+
+    document.getElementById('predictedNumbers').textContent = numbers || '-';
+    document.getElementById('bboxCount').textContent = detections.length;
+    const avgConf = detections.length > 0
+        ? detections.reduce((sum, d) => sum + d.score, 0) / detections.length
+        : 0;
+    document.getElementById('avgConfidence').textContent = (avgConf * 100).toFixed(1) + '%';
+}
+
+function showErrorAnalysis(img, detections, predictions) {
+    const section = document.getElementById('errorAnalysisSection');
+    const container = document.getElementById('bboxImagesContainer');
+
+    section.style.display = 'block';
+    container.innerHTML = '';
+
+    predictions.forEach((pred, idx) => {
+        const bboxItem = document.createElement('div');
+        bboxItem.className = 'bbox-item';
+
+        const title = document.createElement('div');
+        title.textContent = `BBox ${idx + 1}: 予測=${pred.digit}`;
+        title.style.fontWeight = 'bold';
+        bboxItem.appendChild(title);
+
+        const stages = document.createElement('div');
+        stages.className = 'bbox-stages';
+
+        const stageData = [
+            { canvas: pred.stages.original, label: '元画像' },
+            { canvas: pred.stages.binarized, label: '二値化' },
+            { canvas: pred.stages.preprocessed, label: 'CNN入力' }
+        ];
+
+        stageData.forEach(stage => {
+            const stageDiv = document.createElement('div');
+
+            const img = document.createElement('img');
+            img.className = 'stage-image';
+            img.src = stage.canvas.toDataURL();
+            img.width = 100;
+            img.height = 100;
+            img.style.objectFit = 'contain';
+
+            const label = document.createElement('div');
+            label.className = 'stage-label';
+            label.textContent = stage.label;
+
+            stageDiv.appendChild(img);
+            stageDiv.appendChild(label);
+            stages.appendChild(stageDiv);
+        });
+
+        bboxItem.appendChild(stages);
+        container.appendChild(bboxItem);
+    });
+}
+
+function showLoading(show, message = '処理中...') {
+    const loadingEl = document.querySelector('.loading');
+    loadingEl.textContent = message;
+    loadingEl.classList.toggle('active', show);
+}
+
+function showError(message) {
+    const errorEl = document.getElementById('errorMessage');
+    errorEl.textContent = message;
+    errorEl.classList.add('active');
+    setTimeout(() => errorEl.classList.remove('active'), 5000);
+}
+
+function clearResults() {
+    document.getElementById('predictedNumbers').textContent = '-';
+    document.getElementById('bboxCount').textContent = '-';
+    document.getElementById('avgConfidence').textContent = '-';
+    document.getElementById('errorAnalysisSection').style.display = 'none';
+
+    // Canvasをクリア
+    const canvas = document.getElementById('imageCanvas');
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
